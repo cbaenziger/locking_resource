@@ -41,9 +41,8 @@ class Chef
         lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
                               new_resource.name.gsub(' ', ':'))
 
+        zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
         unless node[:locking_resource][:skip_restart_coordination]
-          zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
-
           Chef::Log.info "Acquiring lock #{lock_path}"
           # acquire lock
           got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data) and \
@@ -58,6 +57,7 @@ class Chef
             sleep(node[:locking_resource][:restart_lock_acquire][:sleep_time])
           end
         else
+          got_lock = false
           Chef::Log.warn 'Restart coordination disabled -- skipping lock ' \
                          "acquisition on #{lock_path}"
         end
@@ -68,7 +68,11 @@ class Chef
             r.run_action new_resource.perform
             r.resolve_notification_references
             new_resource.updated_by_last_action(r.updated)
-            release_lock(zk_hosts, lock_path, new_resource.lock_data)
+            begin
+              release_lock(zk_hosts, lock_path, new_resource.lock_data)
+            rescue ::LockingResource::Helper::LockingResourceException => e
+              Chef::Log.warn e.message
+            end
           end
         else
           raise 'Failed to acquire lock for ' +
@@ -98,6 +102,7 @@ class Chef
 
         # if the process is not running we do not care about lock management --
         # just run the action
+        l_time = nil
         if p_start
           lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
                                   new_resource.name.gsub(' ', ':'))

@@ -10,7 +10,7 @@ describe 'locking_resource_test::simple_serialized_lock' do
       ChefSpec::SoloRunner.new(platform: 'ubuntu', version: '12.04',
                                cookbook_path: cookbook_path,
                                step_into: ['locking_resource']) do |node|
-        node.automatic['fqdn'] = 'test_host'
+        node.automatic[:fqdn] = 'test_host'
       end
     end
 
@@ -36,11 +36,12 @@ describe 'locking_resource_test::simple_serialized_lock' do
       ChefSpec::SoloRunner.new(platform: 'ubuntu', version: '12.04',
                                cookbook_path: cookbook_path,
                                step_into: ['locking_resource']) do |node|
-        node.normal['locking_resource']['skip_restart_coordination'] = true
+        node.override[:locking_resource][:skip_restart_coordination] = true
+        node.override[:locking_resource][:zookeeper_servers] = ['localhost:2181']
       end
     end
 
-    it 'should log if lock not present' do
+    it 'should run resource if lock not present' do
       chef_run.converge(described_recipe)
       expect(chef_run).to write_log('This is a dummy resource')
     end
@@ -53,7 +54,7 @@ describe 'locking_resource_test::simple_serialized_lock' do
       end
     end
 
-    it 'should log if lock not present' do
+    it 'should run resource if lock not present' do
       chef_run.converge(described_recipe)
       expect(chef_run).to serialize_locking_resource('Dummy Resource Lock')
     end
