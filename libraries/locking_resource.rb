@@ -16,6 +16,7 @@ class Chef
     default_action(:serialize)
 
     attribute(:name, kind_of: String)
+    attribute(:lock_name, kind_of: String, default: nil)
     attribute(:resource, kind_of: String, required: true)
     attribute(:perform, kind_of: Symbol, required: true)
     attribute(:timeout, kind_of: Integer, default:
@@ -39,8 +40,9 @@ class Chef
         # to avoid namespace collisions replace spaces in resource name with
         # a colon -- zookeeper's quite permissive on paths:
         # https://zookeeper.apache.org/doc/trunk/zookeeperProgrammers.html#ch_zkDataModel
+        lock_name = new_resource.lock_name or new_resource.name.gsub(' ', ':')
         lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
-                              new_resource.name.gsub(' ', ':'))
+                                lock_name)
 
         zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
         unless node[:locking_resource][:skip_restart_coordination]
