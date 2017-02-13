@@ -2,7 +2,7 @@
 # Cookbook Name:: locking_resource
 # Library:: locking_resource
 #
-# Copyright (C) 2016 Bloomberg Finance L.P.
+# Copyright (C) 2017 Bloomberg Finance L.P.
 #
 require 'poise'
 require 'set'
@@ -18,7 +18,8 @@ class Chef
     attribute(:name, kind_of: String)
     attribute(:resource, kind_of: String, required: true)
     attribute(:perform, kind_of: Symbol, required: true)
-    attribute(:timeout, kind_of: Integer, default: lazy { node[:locking_resource][:restart_lock_acquire][:timeout] })
+    attribute(:timeout, kind_of: Integer, default:
+              lazy { node[:locking_resource][:restart_lock_acquire][:timeout] })
     attribute(:process_pattern, option_collector: true)
     attribute(:lock_data, kind_of: String, default: lazy { node[:fqdn] })
 
@@ -45,20 +46,20 @@ class Chef
         unless node[:locking_resource][:skip_restart_coordination]
           Chef::Log.info "Acquiring lock #{lock_path}"
           # acquire lock
-          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data) and \
-            Chef::Log.info "Found stale lock"
-          # intentionally do not use a timeout to avoid leaving a wonky zookeeper
-          # object or connection if we interrupt it -- thus we trust the
-          # zookeeper object to not wantonly hang
+          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
+            and Chef::Log.info "Found stale lock"
+          # intentionally do not use a timeout to avoid leaving a wonky
+          # zookeeper object or connection if we interrupt it -- thus we trust
+          # the zookeeper object to not wantonly hang
           start_time = Time.now
           while !got_lock && (start_time + new_resource.timeout) >= Time.now
-            got_lock = create_node(zk_hosts, lock_path, new_resource.lock_data) and \
-              Chef::Log.info 'Acquired new lock'
+            got_lock = create_node(zk_hosts, lock_path, new_resource.lock_data)\
+              and Chef::Log.info 'Acquired new lock'
             sleep(node[:locking_resource][:restart_lock_acquire][:sleep_time])
           end
           # see if we ever got a lock -- if not record it for later
           if !got_lock
-            need_rerun(node)
+            need_rerun(node,lock_path)
           end
         else
           got_lock = false
@@ -98,38 +99,48 @@ class Chef
       converge_by("serializing as process #{new_resource.name} via lock") do
         r = run_context.resource_collection.resources(new_resource.resource)
         # convert keys from strings to symbols for process_start_time()
-        start_time_args = new_resource.process_pattern.inject({}) do |memo,(k,v)|
+        start_time_arg = new_resource.process_pattern.inject({}) do |memo,(k,v)|
           memo[k.to_sym] = v
           memo
         end
-        p_start = process_start_time(start_time_args)
+        p_start = process_start_time(start_time_arg)
 
         # if the process is not running we do not care about lock management --
         # just run the action
-        l_time = nil
+        l_time = false
         if p_start
+          # questionable if we want to include cookbook_name and recipe_name in
+          # the lock as we may have multiple resources with the same name
           lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
                                   new_resource.name.gsub(' ', ':'))
           zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
 
-          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data) \
+          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
             or return
           l_time = get_node_ctime(zk_hosts, lock_path)
           Chef::Log.warn "Found stale lock" if got_lock
         end
 
-        if !p_start or p_start <= rerun_time?(node) or p_start <= l_time
+        r_time = rerun_time?(node, lock_path)
+        # verify we are holding the lock and need to re-run
+        lock_and_rerun = (p_start <= (r_time or Time.new(0)) and l_time)
+
+        if !p_start or \
+           lock_and_rerun or \
+           p_start <= (l_time or Time.new(1970))
           Chef::Log.warn "Restarting process: lock time " \
-                         "#{l_time}; process restarted #{p_start}"
+                         "#{l_time}; rerun state #{r_time}; " \
+                         "process restarted #{p_start}"
           notifying_block do
             r.run_action new_resource.perform
             r.resolve_notification_references
             new_resource.updated_by_last_action(r.updated)
           end
-          clear_rerun(node)
+          clear_rerun(node, lock_path)
         else
-          Chef::Log.warn "Not restarting process: lock time " \
-                         "#{l_time}; process restarted #{p_start}"
+          Chef::Log.warn "Not restarting process: lock time #{l_time}; " \
+                         "rerun state #{r_time}; " \
+                         "process restarted #{p_start}"
         end
         # release_lock will not matter if we are not holding the lock
         release_lock(zk_hosts, lock_path, new_resource.lock_data)

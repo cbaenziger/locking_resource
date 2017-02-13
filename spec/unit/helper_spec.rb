@@ -479,23 +479,18 @@ describe LockingResource::Helper do
       let(:mock_time) { Time.strptime('1476401413663', '%Q') }
       let(:path1_rerun_data) { { "time" => mock_time - 10*60, "fails" => 1 } } 
       let(:path2_rerun_data) { { "time" => mock_time - 30*60, "fails" => 1 } } 
+      let(:path1) { 'cookbook::recipe::test_package' }
+      let(:path2) { 'cookbook::recipe::test_bash' }
       before(:each) do
         node.normal[:locking_resource][:failed_locks] = {
-          :locking_resource => {
-            :failed_locks => {
-              path1.to_sym => path1_rerun_data,
-              path2.to_sym => path2_rerun_data
-            }
-          }
+          path1 => path1_rerun_data,
+          path2 => path2_rerun_data
         }
       end
 
-      let(:path1) { 'cookbook::recipe::test_package' }
-      let(:path2) { 'cookbook::recipe::test_bash' }
-
       it '#clear_rerun(path1) returns mock_time - 10*60' do
         expect(dummy_class.new.clear_rerun(node, path1)).to \
-          eq(mock_time - 10*60)
+          match_array(path1_rerun_data)
       end
 
       it '#rerun_time?(path2) returns mock_time - 30*60' do

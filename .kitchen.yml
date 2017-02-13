@@ -25,3 +25,6 @@ suites:
   - name: serialized_process
     run_list:
       - 'recipe[locking_resource_test::serialized_process_lock_handling]'
+  - name: re_run_lock
+    run_list:
+      - 'recipe[locking_resource_test::re_run_lock]'
