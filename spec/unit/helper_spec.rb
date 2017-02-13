@@ -462,4 +462,78 @@ describe LockingResource::Helper do
       end
     end
   end
+
+  describe 'rerun functions' do
+    let(:dummy_class) do
+      Class.new do
+        include LockingResource::Helper
+      end
+    end
+
+    #def need_rerun(node, path)
+    #def rerun_time?(node, path)
+    #def clear_rerun(node, path)
+
+    context 'test node has had reruns set' do
+      let(:node) { Chef::Node.new }
+      let(:mock_time) { Time.strptime('1476401413663', '%Q') }
+      let(:path1_rerun_data) { { "time" => mock_time - 10*60, "fails" => 1 } } 
+      let(:path2_rerun_data) { { "time" => mock_time - 30*60, "fails" => 1 } } 
+      before(:each) do
+        node.normal[:locking_resource][:failed_locks] = {
+          :locking_resource => {
+            :failed_locks => {
+              path1.to_sym => path1_rerun_data,
+              path2.to_sym => path2_rerun_data
+            }
+          }
+        }
+      end
+
+      let(:path1) { 'cookbook::recipe::test_package' }
+      let(:path2) { 'cookbook::recipe::test_bash' }
+
+      it '#clear_rerun(path1) returns mock_time - 10*60' do
+        expect(dummy_class.new.clear_rerun(node, path1)).to \
+          eq(mock_time - 10*60)
+      end
+
+      it '#rerun_time?(path2) returns mock_time - 30*60' do
+        expect(dummy_class.new.rerun_time?(node, path2)).to \
+          eq(mock_time - 30*60)
+      end
+
+      it '#need_rerun(path1) returns mock_time - 10*60' do
+        allow(Time).to receive(:now).and_return(mock_time)
+        expect(dummy_class.new.need_rerun(node, path1)).to \
+          match_array({ "time" => path1_rerun_data["time"],
+                        "fails" => path1_rerun_data["fails"] + 1 })
+      end
+    end
+
+    context 'test node has not had a rerun set' do
+      let(:node) { Chef::Node.new }
+      before(:each) do
+        node.normal[:locking_resource][:failed_locks] = {}
+      end
+      let(:path1) { 'cookbook::recipe::test_package' }
+      let(:path2) { 'cookbook::recipe::test_bash' }
+      let(:mock_time) { Time.strptime('1476401413663', '%Q') }
+      let(:rerun_data) { { "time" => mock_time, "fails" => 1 } } 
+
+      it '#clear_rerun returns nil' do
+        expect(dummy_class.new.clear_rerun(node, path1)).to eq(nil)
+      end
+
+      it '#rerun_time? returns nil' do
+        expect(dummy_class.new.rerun_time?(node, path1)).to eq(nil)
+      end
+
+      it '#need_rerun returns current time' do
+        allow(Time).to receive(:now).and_return(mock_time)
+        expect(dummy_class.new.need_rerun(node, path1)).to \
+          match_array(rerun_data)
+      end
+    end
+  end
 end

@@ -11,6 +11,56 @@ module LockingResource
     end
 
     #
+    # Set some state to flag that a locking resource needs to be re-run
+    # Inputs:
+    #   node - A node object which we can update
+    #   path - A lock path string to use for saving the rerun state
+    # Side-effect: writes a Time object and failure count to the node object if
+    #              previously unset otherwise increments failure count
+    # Returns: A hash with the following keys
+    #       "time" : Time object stored in the node object
+    #       "fails" : number of times this lock has failed
+    #  
+    def need_rerun(node, path)
+      failed_locks = Proc.new { node[:locking_resource][:failed_locks] }
+      failed_locks_set = Proc.new do |key, val|
+        node.normal[:locking_resource][:failed_locks][key] = val
+      end
+      if failed_locks.call.fetch(path, false)
+        failed_locks_set.call(path, {
+          "time": failed_locks.call[path]["time"],
+          "fails": failed_locks.call[path]["fails"] + 1 })
+      else
+        failed_locks_set.call(path,
+                              { "time" => Time.now, "fails" => 1 })
+      end
+      return failed_locks.call[path]
+    end
+
+    #
+    # Returns the rerun time saved in the node object
+    # Inputs:
+    #   node - A node object which we can update
+    #   path - A lock path string to use for saving the rerun state
+    # Returns: returns the Time object from the node object or nil if not set
+    #
+    def rerun_time?(node, path)
+      node[:locking_resource][:failed_locks].fetch(
+        path, {"time" => nil})["time"]
+    end
+
+    #
+    # Clears out the Time object saved in the node object
+    # Inputs:
+    #   node - A node object which we can update
+    #   path - A lock path string to use for saving the rerun state
+    # Returns: returns the Time object from the node object or nil if not set
+    #
+    def clear_rerun(node, path)
+      node.normal[:locking_resource][:failed_locks].delete(path)
+    end
+
+    #
     # Run an arbitrary block of code against a Zookeeper connection
     # Inputs:
     #     quorum - 'localhost:2181' by default, comma separated

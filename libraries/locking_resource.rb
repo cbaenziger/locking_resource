@@ -56,6 +56,10 @@ class Chef
               Chef::Log.info 'Acquired new lock'
             sleep(node[:locking_resource][:restart_lock_acquire][:sleep_time])
           end
+          # see if we ever got a lock -- if not record it for later
+          if !got_lock
+            need_rerun(node)
+          end
         else
           got_lock = false
           Chef::Log.warn 'Restart coordination disabled -- skipping lock ' \
@@ -108,12 +112,13 @@ class Chef
                                   new_resource.name.gsub(' ', ':'))
           zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
 
-          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data) or return
+          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data) \
+            or return
           l_time = get_node_ctime(zk_hosts, lock_path)
           Chef::Log.warn "Found stale lock" if got_lock
         end
 
-        if !p_start or p_start <= l_time
+        if !p_start or p_start <= rerun_time?(node) or p_start <= l_time
           Chef::Log.warn "Restarting process: lock time " \
                          "#{l_time}; process restarted #{p_start}"
           notifying_block do
@@ -121,6 +126,7 @@ class Chef
             r.resolve_notification_references
             new_resource.updated_by_last_action(r.updated)
           end
+          clear_rerun(node)
         else
           Chef::Log.warn "Not restarting process: lock time " \
                          "#{l_time}; process restarted #{p_start}"
