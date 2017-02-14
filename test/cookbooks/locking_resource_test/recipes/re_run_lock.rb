@@ -41,7 +41,7 @@ end
 locking_resource 'ruby_block -- timeout' do
   lock_name lock_path
   resource "ruby_block[#{lock_resource}]"
-  process_pattern {command_string 'init'
+  process_pattern {command_string 'not_a_processes'
                    user 'root'}
   perform :run
   action :serialize_process
@@ -62,7 +62,7 @@ end
 locking_resource 'ruby_block -- timeout again' do
   lock_name lock_path
   resource "ruby_block[#{lock_resource}]"
-  process_pattern {command_string 'init'
+  process_pattern {command_string 'not_a_process'
                    user 'root'}
   perform :run
   action :serialize_process
