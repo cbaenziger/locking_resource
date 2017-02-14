@@ -19,8 +19,9 @@ class Chef
     attribute(:lock_name, kind_of: String, default: nil)
     attribute(:resource, kind_of: String, required: true)
     attribute(:perform, kind_of: Symbol, required: true)
-    attribute(:timeout, kind_of: Integer, default:
+    attribute(:timeout, kind_of: Integer, default: \
       lazy { node['locking_resource']['restart_lock_acquire']['timeout'] })
+    attribute(:zookeeper_hosts, kind_of: Array, default: lazy { node['locking_resource']['zookeeper_servers'] })
     attribute(:process_pattern, option_collector: true)
     attribute(:lock_data, kind_of: String, default: lazy { node['fqdn'] })
 
@@ -45,7 +46,7 @@ class Chef
           node['locking_resource']['restart_lock']['root'],
           lock_name)
 
-        zk_hosts = parse_zk_hosts(node['locking_resource']['zookeeper_servers'])
+        zk_hosts = parse_zk_hosts(new_resource.zookeeper_hosts)
         unless node['locking_resource']['skip_restart_coordination']
           Chef::Log.info "Acquiring lock #{lock_path}"
           # acquire lock
@@ -100,16 +101,19 @@ class Chef
         Set.new(new_resource.process_pattern.keys) < \
         Set.new(vppo.keys)
       converge_by("serializing as process #{new_resource.name} via lock") do
+        l_time = false
+        lock_and_rerun = false
+
         r = run_context.resource_collection.resources(new_resource.resource)
+        zk_hosts = parse_zk_hosts(new_resource.zookeeper_hosts)
+
         # convert keys from strings to symbols for process_start_time()
         start_time_arg = new_resource.process_pattern.inject({}) do |memo,(k,v)|
           memo[k.to_sym] = v
           memo
         end
-        p_start = process_start_time(start_time_arg)
 
-        l_time = false
-        lock_and_rerun = false
+        p_start = process_start_time(start_time_arg) or false
 
         # if the process is not running we do not care about lock management --
         # just run the action
@@ -119,8 +123,6 @@ class Chef
           lock_path = ::File.join(
             node['locking_resource']['restart_lock']['root'],
             new_resource.name.gsub(' ', ':'))
-          zk_hosts = parse_zk_hosts(
-            node['locking_resource']['zookeeper_servers'])
 
           got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
             or return
