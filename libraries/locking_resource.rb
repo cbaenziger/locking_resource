@@ -20,11 +20,11 @@ class Chef
     attribute(:resource, kind_of: String, required: true)
     attribute(:perform, kind_of: Symbol, required: true)
     attribute(:timeout, kind_of: Integer, default:
-              lazy { node[:locking_resource][:restart_lock_acquire][:timeout] })
+      lazy { node['locking_resource']['restart_lock_acquire']['timeout'] })
     attribute(:process_pattern, option_collector: true)
-    attribute(:lock_data, kind_of: String, default: lazy { node[:fqdn] })
+    attribute(:lock_data, kind_of: String, default: lazy { node['fqdn'] })
 
-    # XXX should validate node[:locking_resource][:zookeeper_servers] parses
+    # XXX should validate node['locking_resource']['zookeeper_servers'] parses
   end
 
   class Provider::LockingResource < Provider
@@ -41,11 +41,12 @@ class Chef
         # a colon -- zookeeper's quite permissive on paths:
         # https://zookeeper.apache.org/doc/trunk/zookeeperProgrammers.html#ch_zkDataModel
         lock_name = new_resource.lock_name or new_resource.name.gsub(' ', ':')
-        lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
-                                lock_name)
+        lock_path = ::File.join(
+          node['locking_resource']['restart_lock']['root'],
+          lock_name)
 
-        zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
-        unless node[:locking_resource][:skip_restart_coordination]
+        zk_hosts = parse_zk_hosts(node['locking_resource']['zookeeper_servers'])
+        unless node['locking_resource']['skip_restart_coordination']
           Chef::Log.info "Acquiring lock #{lock_path}"
           # acquire lock
           got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
@@ -57,7 +58,7 @@ class Chef
           while !got_lock && (start_time + new_resource.timeout) >= Time.now
             got_lock = create_node(zk_hosts, lock_path, new_resource.lock_data)\
               and Chef::Log.info 'Acquired new lock'
-            sleep(node[:locking_resource][:restart_lock_acquire][:sleep_time])
+            sleep(node['locking_resource']['restart_lock_acquire']['sleep_time'])
           end
           # see if we ever got a lock -- if not record it for later
           if !got_lock
@@ -70,7 +71,7 @@ class Chef
         end
 
         # affect the resource, if we got the lock -- or error
-        if got_lock or node[:locking_resource][:skip_restart_coordination]
+        if got_lock or node['locking_resource']['skip_restart_coordination']
           notifying_block do
             r.run_action new_resource.perform
             r.resolve_notification_references
@@ -107,15 +108,19 @@ class Chef
         end
         p_start = process_start_time(start_time_arg)
 
+        l_time = false
+        lock_and_rerun = false
+
         # if the process is not running we do not care about lock management --
         # just run the action
-        l_time = false
         if p_start
           # questionable if we want to include cookbook_name and recipe_name in
           # the lock as we may have multiple resources with the same name
-          lock_path = ::File.join(node[:locking_resource][:restart_lock][:root],
-                                  new_resource.name.gsub(' ', ':'))
-          zk_hosts = parse_zk_hosts(node[:locking_resource][:zookeeper_servers])
+          lock_path = ::File.join(
+            node['locking_resource']['restart_lock']['root'],
+            new_resource.name.gsub(' ', ':'))
+          zk_hosts = parse_zk_hosts(
+            node['locking_resource']['zookeeper_servers'])
 
           got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
             or return
@@ -125,7 +130,8 @@ class Chef
 
         r_time = rerun_time?(node, lock_path)
         # verify we are holding the lock and need to re-run
-        lock_and_rerun = (p_start <= (r_time or Time.new(0)) and l_time)
+        lock_and_rerun = (p_start <= (r_time or Time.new(0)) and l_time) \
+          if p_start
 
         if !p_start or \
            lock_and_rerun or \
