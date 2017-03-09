@@ -36,12 +36,13 @@ class Chef
     provides(:locking_resource)
 
     def action_serialize
-      converge_by("serializing #{new_resource.name} via lock") do
+      converge_by("serializing #{new_resource.name}") do
         r = run_context.resource_collection.resources(new_resource.resource)
 
         # to avoid namespace collisions replace spaces in resource name with
         # a colon -- zookeeper's quite permissive on paths:
         # https://zookeeper.apache.org/doc/trunk/zookeeperProgrammers.html#ch_zkDataModel
+        puts "XXX1 #{new_resource.lock_name}"
         lock_name = new_resource.lock_name || new_resource.name.tr_s(' ', ':')
         lock_path = ::File.join(
           node['locking_resource']['restart_lock']['root'],
@@ -73,16 +74,20 @@ class Chef
             sleep(
               node['locking_resource']['restart_lock_acquire']['sleep_time']
             )
+            Chef::Log.warn "Sleeping for lock #{lock_path}"
           end
           # see if we ever got a lock -- if not record it for later
-          need_rerun(node, lock_path) unless got_lock
+          if !got_lock
+            Chef::Log.warn "Did not get lock #{lock_path}"
+            need_rerun(node, lock_path)
+          end
         end
 
         # affect the resource, if we got the lock -- or error
         if got_lock || node['locking_resource']['skip_restart_coordination']
           notifying_block do
             unless r
-              raise "Unable to find resource #{new_resource.resource} in " \
+              fail "Unable to find resource #{new_resource.resource} in " \
                 'resources'
             end
             r.run_action new_resource.perform
@@ -95,24 +100,24 @@ class Chef
             end
           end
         else
-          raise 'Failed to acquire lock for ' \
+          fail 'Failed to acquire lock for ' \
                 "LockingResource[#{new_resource.name}], path #{lock_path}"
         end
       end
     end
 
     # Only restart the service if we are holding the lock
-    # and the service has not restarted since we got the lock
+    # and the service has not restarted since we started trying to get the lock
     def action_serialize_process
       vppo = ::LockingResource::Helper::VALID_PROCESS_PATTERN_OPTS
       raise 'Need a process pattern attribute' unless \
-        new_resource.process_pattern.!empty?
+        !new_resource.process_pattern.empty?
       if Set.new(new_resource.process_pattern.keys) < \
         Set.new(vppo.keys)
         raise "Only expect options: #{vppo.keys} but got " \
           "#{new_resource.process_pattern.keys}"
       end
-      converge_by("serializing as process #{new_resource.name} via lock") do
+      converge_by("serializing #{new_resource.name} on process") do
         l_time = false
         lock_and_rerun = false
 
@@ -121,23 +126,24 @@ class Chef
 
         # convert keys from strings to symbols for process_start_time()
         start_time_arg = \
-            new_resource.process_pattern.each_with_object({}) do |memo, (k, v)|
+            new_resource.process_pattern.inject({}) do |memo, (k, v)|
           memo[k.to_sym] = v
           memo
         end
 
         p_start = process_start_time(start_time_arg) || false
 
+        # questionable if we want to include cookbook_name and recipe_name in
+        # the lock as we may have multiple resources with the same name
+        lock_name = new_resource.lock_name || new_resource.name.tr_s(' ', ':')
+        lock_path = ::File.join(
+          node['locking_resource']['restart_lock']['root'],
+          lock_name
+        )
+
         # if the process is not running we do not care about lock management --
         # just run the action
         if p_start
-          # questionable if we want to include cookbook_name and recipe_name in
-          # the lock as we may have multiple resources with the same name
-          lock_path = ::File.join(
-            node['locking_resource']['restart_lock']['root'],
-            new_resource.name.tr_s(' ', ':')
-          )
-
           # rubocop:disable no-and-or-or
           got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
             or return
@@ -155,22 +161,26 @@ class Chef
         if !p_start || \
            lock_and_rerun || \
            p_start <= (l_time || Time.new(1970))
-          Chef::Log.warn 'Restarting process: lock time ' \
-                         "#{l_time}; rerun state #{r_time}; " \
-                         "process restarted #{p_start}"
+          Chef::Log.info 'Restarting process: lock time: ' \
+                         "#{l_time}; rerun flag time: #{r_time}; " \
+                         "process restarted since lock: #{p_start}"
           notifying_block do
             r.run_action new_resource.perform
             r.resolve_notification_references
             new_resource.updated_by_last_action(r.updated)
+            clear_rerun(node, lock_path)
           end
-          clear_rerun(node, lock_path)
         else
-          Chef::Log.warn "Not restarting process: lock time #{l_time}; " \
-                         "rerun state #{r_time}; " \
-                         "process restarted #{p_start}"
+          Chef::Log.warn "Not restarting process: lock time: #{l_time}; " \
+                         "rerun flag time: #{r_time}; " \
+                         "process restarted since lock: #{p_start}"
         end
         # release_lock will not matter if we are not holding the lock
-        release_lock(zk_hosts, lock_path, new_resource.lock_data)
+        begin
+          release_lock(zk_hosts, lock_path, new_resource.lock_data)
+        rescue ::LockingResource::Helper::LockingResourceException => e
+          Chef::Log.warn e.message
+        end
       end
     end
   end

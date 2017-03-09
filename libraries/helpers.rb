@@ -28,12 +28,13 @@ module LockingResource
       end
       if failed_locks.call.fetch(path, false)
         failed_locks_set.call(path, {
-          "time": failed_locks.call[path]["time"],
-          "fails": failed_locks.call[path]["fails"] + 1 })
+          "time" => failed_locks.call[path]["time"],
+          "fails" => failed_locks.call[path]["fails"] + 1 })
       else
         failed_locks_set.call(path,
                               { "time" => Time.now, "fails" => 1 })
       end
+      puts "XXX #{failed_locks.call[path]}"
       return failed_locks.call[path]
     end
 
@@ -45,6 +46,7 @@ module LockingResource
     # Returns: returns the Time object from the node object or nil if not set
     #
     def rerun_time?(node, path)
+      puts "XXX rerun_time #{path}"
       node[:locking_resource][:failed_locks].fetch(
         path, {"time" => nil})["time"]
     end
@@ -236,7 +238,7 @@ module LockingResource
                                   user: nil}
     def process_start_time(full_cmd: false, command_string: nil, user: nil)
       require 'time'
-      
+
       raise 'Need a command_string or user to search for:' if \
         (command_string.nil? and user.nil?)
       # pgrep options mapped to command arguments

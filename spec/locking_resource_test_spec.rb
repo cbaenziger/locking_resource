@@ -86,6 +86,16 @@ describe 'locking_resource_test::simple_serialized_process' do
       expect(chef_run).to run_ruby_block('my resource')
     end
 
+    it 'should restart if process not returned' do
+      allow_any_instance_of(Chef::Provider::LockingResource).to \
+        receive(:lock_matches?).and_return(true)
+      allow_any_instance_of(Chef::Provider::LockingResource).to \
+        receive(:process_start_time).and_return(nil)
+      allow_any_instance_of(Chef::Provider::LockingResource).to \
+        receive(:release_lock).and_return(true)
+      chef_run.converge(described_recipe)
+      expect(chef_run).to run_ruby_block('my resource')
+    end
 
     it 'should not restart if process restarted since lock' do
       allow_any_instance_of(Chef::Provider::LockingResource).to \
