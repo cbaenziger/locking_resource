@@ -100,6 +100,7 @@ class Chef
             end
           end
         else
+          need_rerun(node, lock_path)
           fail 'Failed to acquire lock for ' \
                 "LockingResource[#{new_resource.name}], path #{lock_path}"
         end
