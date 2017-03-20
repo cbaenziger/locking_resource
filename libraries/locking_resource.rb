@@ -39,12 +39,13 @@ class Chef
     # Loops trying to acquire lock and returns true if lock acquired,
     # false otherwise
     # Inputs:
+    #   zk_hosts   - a string of <host>:<port>,<host>:<port>,... for ZK hosts
     #   lock_path  - the path for the lock
+    #   lock_data  - the data to record in the lock, if we acquire the lock
     #   timeout    - the overall time to try acquiring the lock
     #   retry_time - the time to re-try acquiring the lock (should be less
     #                than and a multiple of the total timeout)
-    #   lock_data  - the data to record in the lock, if we acquire the lock
-    def acquire_lock(lock_path, timeout, retry_time, lock_data)
+    def acquire_lock(zk_hosts, lock_path, lock_data, timeout, retry_time)
       Chef::Log.info "Acquiring lock #{lock_path}"
       # acquire lock
       # rubocop:disable no-and-or-or
@@ -96,8 +97,8 @@ class Chef
         else
           loop_time = \
             node['locking_resource']['restart_lock_acquire']['sleep_time']
-          got_lock = acquire_lock(lock_path, new_resource.timeout, loop_time,
-                                  new_resource.lock_data, )
+          got_lock = acquire_lock(zk_hosts, lock_path, new_resource.lock_data,
+                                  new_resource.timeout, loop_time)
         end
 
         # affect the resource, if we got the lock -- or error
@@ -155,26 +156,25 @@ class Chef
           lock_name
         )
 
-        # if the process is not running we do not care about lock management --
-        # just run the action
-        if p_start
-          # rubocop:disable no-and-or-or
-          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)\
-            or return
-          # rubocop:enable no-and-or-or
+        r_time = rerun_time?(node, lock_path)
+        begin
+          got_lock = lock_matches?(zk_hosts, lock_path, new_resource.lock_data)
+          l_time = get_node_ctime(zk_hosts, lock_path) if got_lock
+        rescue ::LockingResource::Helper::LockingResourceException => e
+          Chef::Log.warn e.message
+        end
+        Chef::Log.warn 'Found stale lock' if got_lock
 
-          l_time = get_node_ctime(zk_hosts, lock_path)
-          Chef::Log.warn 'Found stale lock' if got_lock
+        # if process is started see if we need to restart it again
+        if p_start
+          node_rerun_needed = p_start <= (r_time || Time.new(0))
+          lock_rerun_needed = p_start <= (l_time || Time.new(0))
+          lock_and_rerun = node_rerun_needed || lock_rerun_needed
         end
 
-        r_time = rerun_time?(node, lock_path)
-        # verify we are holding the lock and need to re-run
-        lock_and_rerun = (p_start <= (r_time || Time.new(0)) && l_time) \
-          if p_start
-
-        if !p_start || \
-           lock_and_rerun || \
-           p_start <= (l_time || Time.new(1970))
+        # if we are not running the process -- run! Otherwise if we have a
+        # past, failed restart attempt, re-run
+        if !p_start || lock_and_rerun
           Chef::Log.info 'Restarting process: lock time: ' \
                          "#{l_time}; rerun flag time: #{r_time}; " \
                          "process restarted since lock: #{p_start}"
@@ -182,15 +182,18 @@ class Chef
             r.run_action new_resource.perform
             r.resolve_notification_references
             new_resource.updated_by_last_action(r.updated)
-            clear_rerun(node, lock_path)
           end
         else
-          Chef::Log.warn "Not restarting process: lock time: #{l_time}; " \
+          Chef::Log.info "Not restarting process: lock time: #{l_time}; " \
                          "rerun flag time: #{r_time}; " \
                          "process restarted since lock: #{p_start}"
         end
-        # release_lock will not matter if we are not holding the lock
+ 
+        # we should not get here if restarting the resource failed --
+        # so clean everything up
+        clear_rerun(node, lock_path)
         begin
+          # release_lock will not matter if we are not holding the lock
           release_lock(zk_hosts, lock_path, new_resource.lock_data)
         rescue ::LockingResource::Helper::LockingResourceException => e
           Chef::Log.warn e.message

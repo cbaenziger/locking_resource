@@ -9,6 +9,11 @@ platforms:
   - name: ubuntu-14.04
     run_list:
     attributes: {
+      locking_resource: {
+        restart_lock_acquire: {
+          timeout: 3
+        }
+      }
     }
 suites:
   - name: simple_locking_resource
